@@ -1,15 +1,14 @@
 import sys
 import json
 from typing import Any
-
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QLabel, QMessageBox,
     QTabWidget, QTreeWidget, QTreeWidgetItem, QTextEdit
 )
-from PySide6.QtCore import Qt
-
+from PySide6.QtCore import Qt, QUrl
 from metadata import extract_metadata
+from PySide6.QtGui import QDesktopServices
 
 
 def add_to_tree(parent: QTreeWidgetItem, key: str, value: Any) -> None:
@@ -88,11 +87,27 @@ class MetadataViewer(QMainWindow):
         self.exif_tree.setColumnWidth(0, 450)
         self.tabs.addTab(self.exif_tree, "EXIF")
 
-        # GPS tab tree
+        # GPS tab (panel: coords + open button + tree)
+        self.gps_tab = QWidget()
+        gps_layout = QVBoxLayout()
+
+        self.gps_coords_label = QLabel("GPS: (none)")
+        self.gps_coords_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        self.open_maps_btn = QPushButton("Open in Maps")
+        self.open_maps_btn.setEnabled(False)
+        self.open_maps_btn.clicked.connect(self.open_in_maps)
+
         self.gps_tree = QTreeWidget()
         self.gps_tree.setHeaderLabels(["Field", "Value"])
         self.gps_tree.setColumnWidth(0, 450)
-        self.tabs.addTab(self.gps_tree, "GPS")
+
+        gps_layout.addWidget(self.gps_coords_label)
+        gps_layout.addWidget(self.open_maps_btn)
+        gps_layout.addWidget(self.gps_tree)
+
+        self.gps_tab.setLayout(gps_layout)
+        self.tabs.addTab(self.gps_tab, "GPS")
 
         # Raw JSON tab
         self.raw_text = QTextEdit()
@@ -106,6 +121,16 @@ class MetadataViewer(QMainWindow):
 
         central.setLayout(main_layout)
         self.setCentralWidget(central)
+
+    def open_in_maps(self):
+        if not self.data:
+            return
+        gps_dec = self.data.get("gps_decimal") or {}
+        url = gps_dec.get("maps_url")
+        if not url:
+            QMessageBox.information(self, "Info", "No GPS coordinates available.")
+            return
+        QDesktopServices.openUrl(QUrl(url))
 
     def open_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -131,7 +156,15 @@ class MetadataViewer(QMainWindow):
                 merged_exif.setdefault(k, v)
 
             gps = self.data.get("gps") or {}
-
+            gps_dec = self.data.get("gps_decimal")
+            if gps_dec and "latitude" in gps_dec and "longitude" in gps_dec:
+                self.gps_coords_label.setText(
+                    f"GPS: {gps_dec['latitude']:.6f}, {gps_dec['longitude']:.6f}"
+                )
+                self.open_maps_btn.setEnabled(True)
+            else:
+                self.gps_coords_label.setText("GPS: (none)")
+                self.open_maps_btn.setEnabled(False)
             populate_tree(self.file_tree, file_info)
             populate_tree(self.exif_tree, merged_exif)
             populate_tree(self.gps_tree, gps if gps else {"info": "No GPS metadata found"})
