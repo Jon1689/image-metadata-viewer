@@ -1,13 +1,13 @@
 from __future__ import annotations
-
 import hashlib
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
-
 from PIL import Image, ExifTags
 import exifread
-
+import re
+from fractions import Fraction
+from urllib.parse import quote_plus
 
 @dataclass
 class FileInfo:
@@ -96,6 +96,7 @@ def extract_metadata(path: str) -> Dict[str, Any]:
         "exif_pillow": pillow_exif,
         "exif_exifread": exifread_exif,
         "gps": _extract_gps(merged),
+        "gps_decimal": extract_gps_decimal(merged),
     }
 
     return make_json_safe(result)
@@ -134,3 +135,81 @@ def make_json_safe(obj: Any) -> Any:
 
     # Fallback: stringify anything unknown
     return str(obj)
+
+def _to_float(x: str) -> float:
+    x = x.strip()
+    if "/" in x:
+        return float(Fraction(x))
+    return float(x)
+
+
+def _parse_dms(value: Any) -> Optional[tuple[float, float, float]]:
+    """
+    Accepts DMS in many forms:
+      - list/tuple like [deg, min, sec]
+      - string like '[42, 30, 123/10]' or '42/1, 30/1, 1234/100'
+    Returns (deg, min, sec) as floats.
+    """
+    if value is None:
+        return None
+
+    # Already a list/tuple of numbers/strings
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        try:
+            deg = float(value[0])
+            mins = float(value[1])
+            sec = float(value[2])
+            return (deg, mins, sec)
+        except Exception:
+            # fall through to string parsing
+            pass
+
+    s = str(value)
+
+    # Pull out numbers and fractions like 123/10
+    parts = re.findall(r"-?\d+(?:\.\d+)?(?:/\d+)?", s)
+    if len(parts) < 3:
+        return None
+
+    try:
+        deg = _to_float(parts[0])
+        mins = _to_float(parts[1])
+        sec = _to_float(parts[2])
+        return (deg, mins, sec)
+    except Exception:
+        return None
+
+
+def _dms_to_decimal(dms: tuple[float, float, float], ref: str) -> float:
+    deg, mins, sec = dms
+    dec = abs(deg) + (mins / 60.0) + (sec / 3600.0)
+    if ref.upper() in ("S", "W"):
+        dec = -dec
+    return dec
+
+
+def extract_gps_decimal(merged_exif: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Tries to derive decimal latitude/longitude from EXIF.
+    Supports exifread-style keys:
+      GPS GPSLatitude, GPS GPSLatitudeRef, GPS GPSLongitude, GPS GPSLongitudeRef
+    """
+    lat_val = merged_exif.get("GPS GPSLatitude")
+    lat_ref = merged_exif.get("GPS GPSLatitudeRef")
+    lon_val = merged_exif.get("GPS GPSLongitude")
+    lon_ref = merged_exif.get("GPS GPSLongitudeRef")
+
+    if not (lat_val and lat_ref and lon_val and lon_ref):
+        return None
+
+    lat_dms = _parse_dms(lat_val)
+    lon_dms = _parse_dms(lon_val)
+    if not lat_dms or not lon_dms:
+        return None
+
+    lat = _dms_to_decimal(lat_dms, str(lat_ref))
+    lon = _dms_to_decimal(lon_dms, str(lon_ref))
+
+    # Maps link (Google Maps query)
+    maps_url = f"https://www.google.com/maps?q={quote_plus(f'{lat},{lon}')}"
+    return {"latitude": lat, "longitude": lon, "maps_url": maps_url}
