@@ -85,7 +85,7 @@ def extract_metadata(path: str) -> Dict[str, Any]:
     for k, v in exifread_exif.items():
         merged.setdefault(k, v)
 
-    return {
+    result = {
         "file": {
             "path": file_info.path,
             "filename": file_info.filename,
@@ -97,3 +97,40 @@ def extract_metadata(path: str) -> Dict[str, Any]:
         "exif_exifread": exifread_exif,
         "gps": _extract_gps(merged),
     }
+
+    return make_json_safe(result)
+
+def make_json_safe(obj: Any) -> Any:
+    """
+    Recursively convert EXIF / PIL types into JSON-serializable Python types.
+    - IFDRational -> float (or str fallback)
+    - bytes -> hex string
+    - tuples/sets -> lists
+    - dict -> dict with string keys
+    """
+    # Basic JSON types
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    # Pillow rationals and similar (they often behave like numbers)
+    try:
+        # IFDRational supports float() in many cases
+        if obj.__class__.__name__ == "IFDRational":
+            return float(obj)
+    except Exception:
+        pass
+
+    # Bytes (sometimes EXIF fields are raw bytes)
+    if isinstance(obj, (bytes, bytearray)):
+        return obj.hex()
+
+    # Lists / tuples / sets
+    if isinstance(obj, (list, tuple, set)):
+        return [make_json_safe(x) for x in obj]
+
+    # Dicts
+    if isinstance(obj, dict):
+        return {str(k): make_json_safe(v) for k, v in obj.items()}
+
+    # Fallback: stringify anything unknown
+    return str(obj)
