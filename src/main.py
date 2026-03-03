@@ -46,6 +46,7 @@ class MetadataViewer(QMainWindow):
 
         self.data = None
         self.current_path = None
+        self.setAcceptDrops(True)        
 
         self.init_ui()
 
@@ -126,6 +127,7 @@ class MetadataViewer(QMainWindow):
         self.preview_label.setMinimumHeight(320)
         self.preview_label.setStyleSheet("border: 1px solid #444; padding: 6px;")
         self.preview_label.setScaledContents(False)  # we scale manually for quality
+        self.preview_label.setAcceptDrops(True)
 
         preview_col.addWidget(self.preview_label)
 
@@ -156,6 +158,77 @@ class MetadataViewer(QMainWindow):
         )
         self.preview_label.setPixmap(scaled)
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            # Accept if any URL looks like a local file
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event):
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+
+        # Take the first local file dropped
+        local_files = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if not local_files:
+            event.ignore()
+            return
+
+        path = local_files[0]
+
+        # Basic extension filter (fast + simple)
+        allowed = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp", ".heic")
+        if not path.lower().endswith(allowed):
+            QMessageBox.information(self, "Not an image", "Please drop an image file.")
+            return
+
+        self.load_image(path)
+        event.acceptProposedAction()
+
+    def load_image(self, path: str) -> None:
+        try:
+            self.data = extract_metadata(path)
+            self.current_path = path
+            self.file_label.setText(path)
+
+            # Preview (if you added the preview feature)
+            if hasattr(self, "_set_preview"):
+                self._set_preview(path)
+
+            # Split views
+            file_info = self.data.get("file", {})
+            merged_exif = {}
+            merged_exif.update(self.data.get("exif_pillow", {}) or {})
+            for k, v in (self.data.get("exif_exifread", {}) or {}).items():
+                merged_exif.setdefault(k, v)
+
+            gps = self.data.get("gps") or {}
+            gps_dec = self.data.get("gps_decimal")
+
+            populate_tree(self.file_tree, file_info)
+            populate_tree(self.exif_tree, merged_exif)
+            populate_tree(self.gps_tree, gps if gps else {"info": "No GPS metadata found"})
+
+            # GPS decimal label + maps button (if present in your UI)
+            if hasattr(self, "gps_coords_label") and hasattr(self, "open_maps_btn"):
+                if gps_dec and "latitude" in gps_dec and "longitude" in gps_dec:
+                    self.gps_coords_label.setText(
+                        f"GPS: {gps_dec['latitude']:.6f}, {gps_dec['longitude']:.6f}"
+                    )
+                    self.open_maps_btn.setEnabled(True)
+                else:
+                    self.gps_coords_label.setText("GPS: (none)")
+                    self.open_maps_btn.setEnabled(False)
+
+            self.raw_text.setText(json.dumps(self.data, indent=2, ensure_ascii=False))
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to extract metadata:\n{e}")
+
     def open_in_maps(self):
         if not self.data:
             return
@@ -175,39 +248,7 @@ class MetadataViewer(QMainWindow):
         )
         if not path:
             return
-
-        try:
-            self.data = extract_metadata(path)
-            self.current_path = path
-            self.file_label.setText(path)
-            self._set_preview(path)
-
-            # Split views
-            file_info = self.data.get("file", {})
-            # Build a merged EXIF view for display convenience
-            merged_exif = {}
-            merged_exif.update(self.data.get("exif_pillow", {}) or {})
-            for k, v in (self.data.get("exif_exifread", {}) or {}).items():
-                merged_exif.setdefault(k, v)
-
-            gps = self.data.get("gps") or {}
-            gps_dec = self.data.get("gps_decimal")
-            if gps_dec and "latitude" in gps_dec and "longitude" in gps_dec:
-                self.gps_coords_label.setText(
-                    f"GPS: {gps_dec['latitude']:.6f}, {gps_dec['longitude']:.6f}"
-                )
-                self.open_maps_btn.setEnabled(True)
-            else:
-                self.gps_coords_label.setText("GPS: (none)")
-                self.open_maps_btn.setEnabled(False)
-            populate_tree(self.file_tree, file_info)
-            populate_tree(self.exif_tree, merged_exif)
-            populate_tree(self.gps_tree, gps if gps else {"info": "No GPS metadata found"})
-
-            self.raw_text.setText(json.dumps(self.data, indent=2, ensure_ascii=False))
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to extract metadata:\n{e}")
+        self.load_image(path)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
