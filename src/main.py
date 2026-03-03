@@ -5,11 +5,14 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QLabel, QMessageBox,
     QTabWidget, QTreeWidget, QTreeWidgetItem, QTextEdit,
-    QListWidget, QListWidgetItem, QCheckBox
+    QListWidget, QListWidgetItem, QCheckBox, QTableWidget,
+    QTableWidgetItem
 )
 from PySide6.QtCore import Qt, QUrl
 from metadata import extract_metadata, sanitize_image
 from PySide6.QtGui import QDesktopServices, QPixmap
+import os
+import csv
 
 
 def add_to_tree(parent: QTreeWidgetItem, key: str, value: Any) -> None:
@@ -160,6 +163,56 @@ class MetadataViewer(QMainWindow):
         self.privacy_tab.setLayout(privacy_layout)
         self.tabs.addTab(self.privacy_tab, "Privacy")
 
+        # --- Batch tab ---
+        self.batch_tab = QWidget()
+        batch_layout = QVBoxLayout()
+
+        batch_btns = QHBoxLayout()
+        self.btn_pick_folder = QPushButton("Select Folder…")
+        self.btn_pick_folder.clicked.connect(self.pick_folder)
+
+        self.btn_scan_folder = QPushButton("Scan Folder")
+        self.btn_scan_folder.clicked.connect(self.scan_folder)
+        self.btn_scan_folder.setEnabled(False)
+
+        self.btn_export_csv = QPushButton("Export CSV…")
+        self.btn_export_csv.clicked.connect(self.export_csv)
+        self.btn_export_csv.setEnabled(False)
+
+        batch_btns.addWidget(self.btn_pick_folder)
+        batch_btns.addWidget(self.btn_scan_folder)
+        batch_btns.addWidget(self.btn_export_csv)
+
+        self.batch_folder_label = QLabel("Folder: (none)")
+        self.batch_folder_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        self.batch_table = QTableWidget()
+        self.batch_table.setColumnCount(9)
+        self.batch_table.setHorizontalHeaderLabels([
+            "File",
+            "Size (bytes)",
+            "Has EXIF",
+            "Has GPS",
+            "Latitude",
+            "Longitude",
+            "Risk Level",
+            "Risk Score",
+            "Camera Model",
+        ])
+        self.batch_table.setSortingEnabled(True)
+        self.batch_table.itemSelectionChanged.connect(self.on_batch_selection_changed)
+
+        batch_layout.addLayout(batch_btns)
+        batch_layout.addWidget(self.batch_folder_label)
+        batch_layout.addWidget(self.batch_table)
+
+        self.batch_tab.setLayout(batch_layout)
+        self.tabs.addTab(self.batch_tab, "Batch")
+
+        # storage for scan results
+        self.batch_results = []
+        self.batch_folder = None
+
         # --- Preview + Tabs (side-by-side) ---
         content_row = QHBoxLayout()
 
@@ -210,6 +263,24 @@ class MetadataViewer(QMainWindow):
                     event.acceptProposedAction()
                     return
         event.ignore()
+
+    def on_batch_selection_changed(self):
+        row = self.batch_table.currentRow()
+        if row < 0:
+            return
+
+        item = self.batch_table.item(row, 0)
+        if not item:
+            return
+
+        path = item.data(Qt.UserRole)
+        if not path:
+            return
+
+        if hasattr(self, "_set_preview"):
+            self._set_preview(path)
+
+        self.file_label.setText(path)
 
     def dropEvent(self, event):
         if not event.mimeData().hasUrls():
@@ -298,6 +369,144 @@ class MetadataViewer(QMainWindow):
             QMessageBox.information(self, "Info", "No GPS coordinates available.")
             return
         QDesktopServices.openUrl(QUrl(url))
+
+    def pick_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select a folder")
+        if not folder:
+            return
+        self.batch_folder = folder
+        self.batch_folder_label.setText(f"Folder: {folder}")
+        self.btn_scan_folder.setEnabled(True)
+
+    def scan_folder(self):
+        if not self.batch_folder:
+            QMessageBox.information(self, "Info", "Select a folder first.")
+            return
+
+        allowed = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp", ".heic")
+        files = []
+        for name in os.listdir(self.batch_folder):
+            path = os.path.join(self.batch_folder, name)
+            if os.path.isfile(path) and name.lower().endswith(allowed):
+                files.append(path)
+
+        if not files:
+            QMessageBox.information(self, "Info", "No images found in that folder.")
+            return
+
+        self.batch_results = []
+        self.batch_table.setRowCount(0)
+
+        for path in files:
+            try:
+                data = extract_metadata(path, compute_hashes=False)
+
+                file_info = data.get("file", {})
+                merged_exif = {}
+                merged_exif.update(data.get("exif_pillow", {}) or {})
+                for k, v in (data.get("exif_exifread", {}) or {}).items():
+                    merged_exif.setdefault(k, v)
+
+                gps_dec = data.get("gps_decimal") or {}
+                has_exif = bool(merged_exif)
+                has_gps = bool(data.get("gps")) or ("latitude" in gps_dec and "longitude" in gps_dec)
+
+                privacy = data.get("privacy") or {}
+                risk_level = privacy.get("level", "UNKNOWN")
+                risk_score = privacy.get("score", 0)
+
+                # Camera model varies by library; common keys:
+                camera_model = (
+                    merged_exif.get("Model")
+                    or merged_exif.get("Image Model")
+                    or merged_exif.get("EXIF LensModel")
+                    or ""
+                )
+
+                row = {
+                    "path": path,
+                    "file": os.path.basename(path),
+                    "size_bytes": file_info.get("size_bytes", 0),
+                    "has_exif": has_exif,
+                    "has_gps": has_gps,
+                    "lat": gps_dec.get("latitude", ""),
+                    "lon": gps_dec.get("longitude", ""),
+                    "risk_level": risk_level,
+                    "risk_score": risk_score,
+                    "camera_model": str(camera_model),
+                }
+
+                self.batch_results.append(row)
+
+            except Exception:
+                # Keep going; add a row showing failure
+                self.batch_results.append({
+                    "path": path,
+                    "file": os.path.basename(path),
+                    "size_bytes": os.path.getsize(path),
+                    "has_exif": False,
+                    "has_gps": False,
+                    "lat": "",
+                    "lon": "",
+                    "risk_level": "ERROR",
+                    "risk_score": 0,
+                    "camera_model": "",
+                })
+
+        self._render_batch_table()
+        self.btn_export_csv.setEnabled(True)
+
+    def _render_batch_table(self):
+        self.batch_table.setRowCount(len(self.batch_results))
+
+        for r, row in enumerate(self.batch_results):
+            vals = [
+                row["file"],
+                str(row["size_bytes"]),
+                "Yes" if row["has_exif"] else "No",
+                "Yes" if row["has_gps"] else "No",
+                f"{row['lat']:.6f}" if isinstance(row["lat"], (float, int)) else str(row["lat"]),
+                f"{row['lon']:.6f}" if isinstance(row["lon"], (float, int)) else str(row["lon"]),
+                row["risk_level"],
+                str(row["risk_score"]),
+                row["camera_model"],
+            ]
+
+            for c, v in enumerate(vals):
+                item = QTableWidgetItem(v)
+
+                # Store full file path in first column (sorting-safe)
+                if c == 0:
+                    item.setToolTip(row["path"])
+                    item.setData(Qt.UserRole, row["path"])  # 🔥 important
+
+                self.batch_table.setItem(r, c, item)
+
+        self.batch_table.resizeColumnsToContents()
+
+    def export_csv(self):
+        if not self.batch_results:
+            QMessageBox.information(self, "Info", "Run a scan first.")
+            return
+
+        out_path, _ = QFileDialog.getSaveFileName(self, "Export CSV", "", "CSV Files (*.csv)")
+        if not out_path:
+            return
+
+        fieldnames = [
+            "path", "file", "size_bytes",
+            "has_exif", "has_gps",
+            "lat", "lon",
+            "risk_level", "risk_score",
+            "camera_model",
+        ]
+
+        with open(out_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self.batch_results)
+
+        QMessageBox.information(self, "Exported", f"CSV saved:\n{out_path}")
 
     def open_image(self):
         path, _ = QFileDialog.getOpenFileName(
