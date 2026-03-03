@@ -414,10 +414,16 @@ def _dms_to_decimal(dms: tuple[float, float, float], ref: str) -> float:
 
 def extract_gps_decimal(merged_exif: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Tries to derive decimal latitude/longitude from EXIF.
-    Supports exifread-style keys:
-      GPS GPSLatitude, GPS GPSLatitudeRef, GPS GPSLongitude, GPS GPSLongitudeRef
+    Convert EXIF GPS fields to decimal degrees.
+    Returns:
+        {
+            "latitude": float,
+            "longitude": float,
+            "maps_url": str,
+            "osm_embed_url": str
+        }
     """
+
     lat_val = merged_exif.get("GPS GPSLatitude")
     lat_ref = merged_exif.get("GPS GPSLatitudeRef")
     lon_val = merged_exif.get("GPS GPSLongitude")
@@ -426,14 +432,37 @@ def extract_gps_decimal(merged_exif: Dict[str, Any]) -> Optional[Dict[str, Any]]
     if not (lat_val and lat_ref and lon_val and lon_ref):
         return None
 
+    # Parse DMS first
     lat_dms = _parse_dms(lat_val)
     lon_dms = _parse_dms(lon_val)
+
     if not lat_dms or not lon_dms:
         return None
 
+    # Convert to decimal
     lat = _dms_to_decimal(lat_dms, str(lat_ref))
     lon = _dms_to_decimal(lon_dms, str(lon_ref))
 
-    # Maps link (Google Maps query)
+    from urllib.parse import quote_plus
+
     maps_url = f"https://www.google.com/maps?q={quote_plus(f'{lat},{lon}')}"
-    return {"latitude": lat, "longitude": lon, "maps_url": maps_url}
+    zoom_delta = 0.002  # tighter zoom
+
+    min_lat = lat - zoom_delta
+    max_lat = lat + zoom_delta
+    min_lon = lon - zoom_delta
+    max_lon = lon + zoom_delta
+
+    osm_embed_url = (
+        "https://www.openstreetmap.org/export/embed.html"
+        f"?bbox={min_lon},{min_lat},{max_lon},{max_lat}"
+        f"&marker={lat},{lon}"
+        "&layer=mapnik"
+    )
+
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "maps_url": maps_url,
+        "osm_embed_url": osm_embed_url,
+    }

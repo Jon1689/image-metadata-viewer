@@ -1,6 +1,7 @@
 import sys
 import json
 from typing import Any
+from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QLabel, QMessageBox,
@@ -102,6 +103,10 @@ class MetadataViewer(QMainWindow):
         self.open_maps_btn = QPushButton("Open in Maps")
         self.open_maps_btn.setEnabled(False)
         self.open_maps_btn.clicked.connect(self.open_in_maps)
+
+        self.map_view = QWebEngineView()
+        self.map_view.setMinimumHeight(260)
+        gps_layout.addWidget(self.map_view)
 
         self.gps_tree = QTreeWidget()
         self.gps_tree.setHeaderLabels(["Field", "Value"])
@@ -340,6 +345,13 @@ class MetadataViewer(QMainWindow):
                 else:
                     self.gps_coords_label.setText("GPS: (none)")
                     self.open_maps_btn.setEnabled(False)
+
+            if hasattr(self, "map_view"):
+                if gps_dec and gps_dec.get("osm_embed_url"):
+                    self.map_view.setUrl(QUrl(gps_dec["osm_embed_url"]))
+                else:
+                    # Blank map when no GPS
+                    self.map_view.setHtml("<html><body><h3>No GPS data to display.</h3></body></html>")
 
             self.raw_text.setText(json.dumps(self.data, indent=2, ensure_ascii=False))
             
