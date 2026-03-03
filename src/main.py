@@ -4,7 +4,8 @@ from typing import Any
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QLabel, QMessageBox,
-    QTabWidget, QTreeWidget, QTreeWidgetItem, QTextEdit
+    QTabWidget, QTreeWidget, QTreeWidgetItem, QTextEdit,
+    QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import Qt, QUrl
 from metadata import extract_metadata
@@ -116,6 +117,25 @@ class MetadataViewer(QMainWindow):
         self.raw_text.setFontFamily("Consolas")
         self.tabs.addTab(self.raw_text, "Raw JSON")
 
+        # Privacy tab
+        self.privacy_tab = QWidget()
+        privacy_layout = QVBoxLayout()
+
+        self.risk_label = QLabel("Privacy risk: (none)")
+        self.risk_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        self.findings_list = QListWidget()
+        self.recs_list = QListWidget()
+
+        privacy_layout.addWidget(self.risk_label)
+        privacy_layout.addWidget(QLabel("Findings:"))
+        privacy_layout.addWidget(self.findings_list)
+        privacy_layout.addWidget(QLabel("Recommendations:"))
+        privacy_layout.addWidget(self.recs_list)
+
+        self.privacy_tab.setLayout(privacy_layout)
+        self.tabs.addTab(self.privacy_tab, "Privacy")
+
         # --- Preview + Tabs (side-by-side) ---
         content_row = QHBoxLayout()
 
@@ -225,6 +245,20 @@ class MetadataViewer(QMainWindow):
                     self.open_maps_btn.setEnabled(False)
 
             self.raw_text.setText(json.dumps(self.data, indent=2, ensure_ascii=False))
+            
+            privacy = self.data.get("privacy") or {}
+            level = privacy.get("level", "UNKNOWN")
+            score = privacy.get("score", 0)
+            self.risk_label.setText(f"Privacy risk: {level} (score {score})")
+
+            self.findings_list.clear()
+            for f in privacy.get("findings", []):
+                item = QListWidgetItem(f"[{f.get('severity')}] {f.get('message')}")
+                self.findings_list.addItem(item)
+
+            self.recs_list.clear()
+            for r in privacy.get("recommendations", []):
+                self.recs_list.addItem(QListWidgetItem(f"• {r}"))
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to extract metadata:\n{e}")

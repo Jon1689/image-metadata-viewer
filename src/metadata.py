@@ -75,6 +75,108 @@ def _extract_gps(merged: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     return gps or None
 
+def analyze_privacy_risks(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Analyze extracted metadata and return:
+      {
+        "level": "LOW|MEDIUM|HIGH",
+        "score": int,
+        "findings": [{"id": "...", "severity": "...", "message": "..."}],
+        "recommendations": [ ... ]
+      }
+    """
+    findings = []
+    score = 0
+
+    def add(fid: str, severity: str, message: str, points: int):
+        nonlocal score
+        findings.append({"id": fid, "severity": severity, "message": message})
+        score += points
+
+    # Pull useful sections
+    exif_p = metadata.get("exif_pillow") or {}
+    exif_e = metadata.get("exif_exifread") or {}
+    gps_dec = metadata.get("gps_decimal") or {}
+    gps_raw = metadata.get("gps") or {}
+
+    # Merge EXIF for easier searching
+    merged = dict(exif_p)
+    for k, v in exif_e.items():
+        merged.setdefault(k, v)
+
+    # 1) GPS location (highest risk)
+    if gps_dec.get("latitude") is not None and gps_dec.get("longitude") is not None:
+        add("gps_coords", "HIGH", "GPS coordinates are present (precise location).", 50)
+    elif gps_raw:
+        add("gps_present", "HIGH", "GPS metadata is present (location-related fields detected).", 45)
+
+    # 2) Device identifiers (often overlooked)
+    device_keys = [
+        "BodySerialNumber", "SerialNumber", "CameraSerialNumber",
+        "LensSerialNumber", "InternalSerialNumber",
+        "EXIF BodySerialNumber", "EXIF SerialNumber",
+        "EXIF LensSerialNumber", "MakerNote",
+    ]
+    for k in device_keys:
+        if k in merged and str(merged.get(k)).strip():
+            add("device_id", "HIGH", f"Device identifier present: {k}.", 35)
+            break
+
+    # 3) Owner / author / copyright / contact
+    owner_keys = [
+        "Artist", "XPAuthor", "Copyright", "OwnerName",
+        "ImageDescription", "UserComment",
+        "IPTC Contact", "IPTC Creator", "IPTC Copyright",
+    ]
+    for k in owner_keys:
+        if k in merged and str(merged.get(k)).strip():
+            add("identity", "MEDIUM", f"Identity/attribution field present: {k}.", 20)
+            break
+
+    # 4) Timestamps (can reveal routine/location over time)
+    time_keys = [
+        "DateTimeOriginal", "DateTimeDigitized", "DateTime",
+        "EXIF DateTimeOriginal", "EXIF DateTimeDigitized", "Image DateTime",
+    ]
+    for k in time_keys:
+        if k in merged and str(merged.get(k)).strip():
+            add("timestamps", "MEDIUM", f"Capture timestamp present: {k}.", 15)
+            break
+
+    # 5) Software tag (signals editing pipeline; not always bad)
+    software_keys = ["Software", "ProcessingSoftware", "EXIF Software", "Image Software"]
+    for k in software_keys:
+        if k in merged and str(merged.get(k)).strip():
+            add("software", "LOW", f"Software tag present: {k} (may indicate editing/export pipeline).", 5)
+            break
+
+    # Decide level
+    if score >= 50:
+        level = "HIGH"
+    elif score >= 20:
+        level = "MEDIUM"
+    else:
+        level = "LOW"
+
+    # Recommendations
+    recs = []
+    if any(f["id"].startswith("gps") for f in findings):
+        recs.append("Remove GPS metadata before sharing publicly.")
+    if any(f["id"] == "device_id" for f in findings):
+        recs.append("Remove device serial identifiers to reduce traceability.")
+    if any(f["id"] == "timestamps" for f in findings):
+        recs.append("Consider removing capture timestamps if they reveal patterns or routines.")
+    if any(f["id"] == "identity" for f in findings):
+        recs.append("Remove author/owner fields if you don’t want attribution or identity leakage.")
+    if not recs:
+        recs.append("No major privacy risks detected; share with normal caution.")
+
+    return {
+        "level": level,
+        "score": score,
+        "findings": findings,
+        "recommendations": recs,
+    }
 
 def extract_metadata(path: str) -> Dict[str, Any]:
     file_info = get_file_info(path)
@@ -97,8 +199,15 @@ def extract_metadata(path: str) -> Dict[str, Any]:
         "exif_exifread": exifread_exif,
         "gps": _extract_gps(merged),
         "gps_decimal": extract_gps_decimal(merged),
+        "privacy": analyze_privacy_risks({
+            "exif_pillow": pillow_exif,
+            "exif_exifread": exifread_exif,
+            "gps": _extract_gps(merged),
+            "gps_decimal": extract_gps_decimal(merged) if "extract_gps_decimal" in globals() else None,
+        }),
     }
 
+    result["privacy"] = analyze_privacy_risks(result)
     return make_json_safe(result)
 
 def make_json_safe(obj: Any) -> Any:
