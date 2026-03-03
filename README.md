@@ -108,7 +108,7 @@ Scan entire directories efficiently:
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/image-metadata-viewer.git
+git clone https://github.com/Jon1689/image-metadata-viewer.git
 cd image-metadata-viewer
 
 # Create virtual environment
