@@ -5,10 +5,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QLabel, QMessageBox,
     QTabWidget, QTreeWidget, QTreeWidgetItem, QTextEdit,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QCheckBox
 )
 from PySide6.QtCore import Qt, QUrl
-from metadata import extract_metadata
+from metadata import extract_metadata, sanitize_image
 from PySide6.QtGui import QDesktopServices, QPixmap
 
 
@@ -127,6 +127,30 @@ class MetadataViewer(QMainWindow):
         self.findings_list = QListWidget()
         self.recs_list = QListWidget()
 
+        # --- Sanitization controls ---
+        privacy_layout.addWidget(QLabel("Sanitize options (save a cleaned copy):"))
+
+        self.cb_remove_all = QCheckBox("Remove ALL metadata")
+        self.cb_remove_gps = QCheckBox("Remove GPS only")
+        self.cb_remove_timestamps = QCheckBox("Remove timestamps")
+        self.cb_remove_device = QCheckBox("Remove device identifiers (serials)")
+        self.cb_remove_identity = QCheckBox("Remove identity fields (artist/owner/comment)")
+        self.cb_keep_orientation = QCheckBox("Keep orientation (recommended)")
+        self.cb_keep_orientation.setChecked(True)
+
+        privacy_layout.addWidget(self.cb_remove_all)
+        privacy_layout.addWidget(self.cb_remove_gps)
+        privacy_layout.addWidget(self.cb_remove_timestamps)
+        privacy_layout.addWidget(self.cb_remove_device)
+        privacy_layout.addWidget(self.cb_remove_identity)
+        privacy_layout.addWidget(self.cb_keep_orientation)
+
+        self.btn_save_sanitized = QPushButton("Save Sanitized Copy…")
+        self.btn_save_sanitized.clicked.connect(self.save_sanitized_copy)
+        self.btn_save_sanitized.setEnabled(False)
+
+        privacy_layout.addWidget(self.btn_save_sanitized)
+
         privacy_layout.addWidget(self.risk_label)
         privacy_layout.addWidget(QLabel("Findings:"))
         privacy_layout.addWidget(self.findings_list)
@@ -213,6 +237,8 @@ class MetadataViewer(QMainWindow):
         try:
             self.data = extract_metadata(path)
             self.current_path = path
+            if hasattr(self, "btn_save_sanitized"):
+                self.btn_save_sanitized.setEnabled(True)
             self.file_label.setText(path)
 
             # Preview (if you added the preview feature)
@@ -288,6 +314,38 @@ class MetadataViewer(QMainWindow):
         super().resizeEvent(event)
         if self.current_path:
             self._set_preview(self.current_path)
+
+    def save_sanitized_copy(self):
+        if not self.current_path:
+            QMessageBox.information(self, "Info", "Open an image first.")
+            return
+
+        # Choose output path
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Sanitized Copy",
+            "",
+            "Images (*.jpg *.jpeg *.png *.tif *.tiff *.webp *.bmp);;All Files (*.*)"
+        )
+        if not out_path:
+            return
+
+        report = sanitize_image(
+            self.current_path,
+            out_path,
+            remove_all=self.cb_remove_all.isChecked(),
+            remove_gps=self.cb_remove_gps.isChecked(),
+            remove_timestamps=self.cb_remove_timestamps.isChecked(),
+            remove_device_ids=self.cb_remove_device.isChecked(),
+            remove_identity=self.cb_remove_identity.isChecked(),
+            keep_orientation=self.cb_keep_orientation.isChecked(),
+        )
+
+        QMessageBox.information(
+            self,
+            "Saved",
+            "Sanitized copy saved.\n\nNotes:\n- " + "\n- ".join(report.get("notes", []))
+        )
 
     def save_json(self):
         if not self.data:

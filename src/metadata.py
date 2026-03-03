@@ -8,6 +8,7 @@ import exifread
 import re
 from fractions import Fraction
 from urllib.parse import quote_plus
+import piexif
 
 @dataclass
 class FileInfo:
@@ -177,6 +178,120 @@ def analyze_privacy_risks(metadata: Dict[str, Any]) -> Dict[str, Any]:
         "findings": findings,
         "recommendations": recs,
     }
+
+def sanitize_image(
+    input_path: str,
+    output_path: str,
+    *,
+    remove_gps: bool = False,
+    remove_timestamps: bool = False,
+    remove_device_ids: bool = False,
+    remove_identity: bool = False,
+    remove_all: bool = False,
+    keep_orientation: bool = True,
+) -> Dict[str, Any]:
+    """
+    Save a sanitized copy of the image.
+
+    Best support: JPEG/TIFF EXIF (via piexif).
+    For other formats: re-save pixel data to strip typical metadata containers.
+
+    Returns a small report dict describing what was removed.
+    """
+    report = {
+        "input": input_path,
+        "output": output_path,
+        "applied": {
+            "remove_all": remove_all,
+            "remove_gps": remove_gps,
+            "remove_timestamps": remove_timestamps,
+            "remove_device_ids": remove_device_ids,
+            "remove_identity": remove_identity,
+            "keep_orientation": keep_orientation,
+        },
+        "notes": [],
+    }
+
+    # If remove_all is chosen, treat it as "strip everything" (but optionally keep orientation)
+    if remove_all:
+        remove_gps = remove_timestamps = remove_device_ids = remove_identity = True
+
+    from PIL import Image  # local import to avoid circular import headaches
+    with Image.open(input_path) as img:
+        fmt = (img.format or "").upper()
+
+        # Try EXIF-aware sanitization for JPEG/TIFF
+        if fmt in ("JPEG", "JPG", "TIFF"):
+            exif_bytes = img.info.get("exif", b"")
+            if not exif_bytes:
+                # No EXIF present; still re-save to ensure clean container
+                img.save(output_path, format=fmt)
+                report["notes"].append("No EXIF found; re-saved image container.")
+                return report
+
+            exif_dict = piexif.load(exif_bytes)
+
+            # Keep orientation if requested
+            orientation_value = None
+            if keep_orientation:
+                orientation_value = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation)
+
+            # Remove GPS IFD entirely
+            if remove_gps and "GPS" in exif_dict:
+                exif_dict["GPS"] = {}
+
+            # Remove timestamps
+            if remove_timestamps:
+                # 0th IFD
+                exif_dict.get("0th", {}).pop(piexif.ImageIFD.DateTime, None)
+                # Exif IFD
+                exif_dict.get("Exif", {}).pop(piexif.ExifIFD.DateTimeOriginal, None)
+                exif_dict.get("Exif", {}).pop(piexif.ExifIFD.DateTimeDigitized, None)
+                # Sometimes SubSecTime tags exist too
+                exif_dict.get("Exif", {}).pop(piexif.ExifIFD.SubSecTime, None)
+                exif_dict.get("Exif", {}).pop(piexif.ExifIFD.SubSecTimeOriginal, None)
+                exif_dict.get("Exif", {}).pop(piexif.ExifIFD.SubSecTimeDigitized, None)
+
+            # Remove device identifiers (best-effort)
+            if remove_device_ids:
+                for ifd_name in ("0th", "Exif", "1st"):
+                    ifd = exif_dict.get(ifd_name, {})
+                    # These tags vary by maker; we remove common ones where defined
+                    ifd.pop(getattr(piexif.ImageIFD, "BodySerialNumber", 0), None)
+                    ifd.pop(getattr(piexif.ExifIFD, "BodySerialNumber", 0), None)
+                    ifd.pop(getattr(piexif.ExifIFD, "LensSerialNumber", 0), None)
+
+                # MakerNote often contains device-specific data
+                exif_dict.get("Exif", {}).pop(piexif.ExifIFD.MakerNote, None)
+
+            # Remove identity fields
+            if remove_identity:
+                exif_dict.get("0th", {}).pop(piexif.ImageIFD.Artist, None)
+                exif_dict.get("0th", {}).pop(piexif.ImageIFD.Copyright, None)
+                exif_dict.get("0th", {}).pop(piexif.ImageIFD.ImageDescription, None)
+                # UserComment sometimes holds personal info
+                exif_dict.get("Exif", {}).pop(piexif.ExifIFD.UserComment, None)
+
+            # If "remove_all": wipe almost everything but optionally restore orientation
+            if remove_all:
+                exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+                if keep_orientation and orientation_value is not None:
+                    exif_dict["0th"][piexif.ImageIFD.Orientation] = orientation_value
+
+            # Dump new EXIF
+            new_exif = piexif.dump(exif_dict)
+
+            # Save sanitized copy; this preserves pixel data + strips selected metadata
+            img.save(output_path, format=fmt, exif=new_exif)
+            report["notes"].append("Sanitized EXIF using piexif for JPEG/TIFF.")
+            return report
+
+        # Fallback for PNG/WebP/BMP/etc:
+        # Re-save pixel data without passing metadata containers.
+        img = img.copy()
+        img.save(output_path, format=fmt if fmt else None)
+        report["notes"].append(f"Re-saved image without EXIF-aware editing (format={fmt or 'unknown'}).")
+        return report
 
 def extract_metadata(path: str) -> Dict[str, Any]:
     file_info = get_file_info(path)
