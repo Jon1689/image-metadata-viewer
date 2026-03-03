@@ -86,15 +86,6 @@ Scan entire directories efficiently:
 - CSV export for reporting
 - Click row to preview image
 
-## Screenshots
-
-> *Screenshots coming soon. Add images of:*
-> - Main viewer interface
-> - Privacy risk scanner results
-> - Batch scan results table
-> - Embedded map view
-
-
 
 ## Installation
 
