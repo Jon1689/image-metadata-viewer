@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QUrl
 from metadata import extract_metadata
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QPixmap
 
 
 def add_to_tree(parent: QTreeWidgetItem, key: str, value: Any) -> None:
@@ -115,12 +115,46 @@ class MetadataViewer(QMainWindow):
         self.raw_text.setFontFamily("Consolas")
         self.tabs.addTab(self.raw_text, "Raw JSON")
 
+        # --- Preview + Tabs (side-by-side) ---
+        content_row = QHBoxLayout()
+
+        # Left: Image preview panel
+        preview_col = QVBoxLayout()
+        self.preview_label = QLabel("No image loaded")
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setMinimumWidth(320)
+        self.preview_label.setMinimumHeight(320)
+        self.preview_label.setStyleSheet("border: 1px solid #444; padding: 6px;")
+        self.preview_label.setScaledContents(False)  # we scale manually for quality
+
+        preview_col.addWidget(self.preview_label)
+
+        # Right: Tabs
+        content_row.addLayout(preview_col, 1)
+        content_row.addWidget(self.tabs, 3)
+
         main_layout.addLayout(btn_row)
         main_layout.addWidget(self.file_label)
-        main_layout.addWidget(self.tabs)
+        main_layout.addLayout(content_row)
 
         central.setLayout(main_layout)
         self.setCentralWidget(central)
+
+    def _set_preview(self, path: str) -> None:
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            self.preview_label.setText("Preview unavailable")
+            self.preview_label.setPixmap(QPixmap())
+            return
+
+        # Fit the image to the label while keeping aspect ratio
+        target_size = self.preview_label.size()
+        scaled = pixmap.scaled(
+            target_size,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+        self.preview_label.setPixmap(scaled)
 
     def open_in_maps(self):
         if not self.data:
@@ -146,6 +180,7 @@ class MetadataViewer(QMainWindow):
             self.data = extract_metadata(path)
             self.current_path = path
             self.file_label.setText(path)
+            self._set_preview(path)
 
             # Split views
             file_info = self.data.get("file", {})
@@ -173,6 +208,11 @@ class MetadataViewer(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to extract metadata:\n{e}")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.current_path:
+            self._set_preview(self.current_path)
 
     def save_json(self):
         if not self.data:
