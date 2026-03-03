@@ -27,13 +27,13 @@ def _hash_file(path: str, algo: str) -> str:
     return h.hexdigest()
 
 
-def get_file_info(path: str) -> FileInfo:
+def get_file_info(path: str, compute_hashes: bool = True) -> FileInfo:
     return FileInfo(
         path=path,
         filename=os.path.basename(path),
         size_bytes=os.path.getsize(path),
-        sha256=_hash_file(path, "sha256"),
-        md5=_hash_file(path, "md5"),
+        sha256=_hash_file(path, "sha256") if compute_hashes else "",
+        md5=_hash_file(path, "md5") if compute_hashes else "",
     )
 
 
@@ -293,8 +293,8 @@ def sanitize_image(
         report["notes"].append(f"Re-saved image without EXIF-aware editing (format={fmt or 'unknown'}).")
         return report
 
-def extract_metadata(path: str) -> Dict[str, Any]:
-    file_info = get_file_info(path)
+def extract_metadata(path: str, *, compute_hashes: bool = True) -> Dict[str, Any]:
+    file_info = get_file_info(path, compute_hashes=compute_hashes)
     pillow_exif = _pillow_exif(path)
     exifread_exif = _exifread_exif(path)
 
