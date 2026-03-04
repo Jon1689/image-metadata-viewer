@@ -14,6 +14,7 @@ A desktop application for analyzing, auditing, and sanitizing image metadata (EX
 
 - [Overview](#overview)
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Supported Formats](#supported-formats)
