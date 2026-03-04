@@ -1,10 +1,12 @@
 # 📷 Image Metadata Privacy Toolkit
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform: Windows/Linux/macOS](https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20macos-blue.svg)](#)
+![Release](https://img.shields.io/github/v/release/Jon1689/image-metadata-viewer)
+![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)
+![GUI](https://img.shields.io/badge/GUI-PySide6-orange.svg)
 
-A professional-grade desktop application for analyzing, auditing, and sanitizing image metadata (EXIF/GPS) with built-in privacy risk scoring, batch scanning, and embedded map visualization.
+A desktop application for analyzing, auditing, and sanitizing image metadata (EXIF/GPS) with privacy risk scoring, batch scanning, and embedded map visualization.
 
 **Built with:** Python + PySide6 (Qt)
 
