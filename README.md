@@ -86,6 +86,19 @@ Scan entire directories efficiently:
 - CSV export for reporting
 - Click row to preview image
 
+## Screenshots
+
+### Metadata Viewer
+![Viewer](docs/screenshots/viewer.png)
+
+### Privacy Risk Analysis
+![Privacy](docs/screenshots/privacy.png)
+
+### Batch Folder Scanner
+![Batch](docs/screenshots/batch.png)
+
+### GPS Map View
+![Map](docs/screenshots/map.png)
 
 ## Installation
 
